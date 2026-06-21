@@ -1,5 +1,6 @@
 # Subdirectory repos (separate git repos)
 cloud-platform-infra/
+local-platform-infra/
 go-crud-service/
 springboot-crud-service/
 
