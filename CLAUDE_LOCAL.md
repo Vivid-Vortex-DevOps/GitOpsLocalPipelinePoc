@@ -380,13 +380,13 @@ Go Service Repository:
 
 https://github.com/Vivid-Vortex-DevOps/go-crud-service.git
 
-Branch: main
+Branch: local_main
 
 Spring Boot Repository:
 
 https://github.com/Vivid-Vortex-DevOps/springboot-crud-service.git
 
-Branch: main
+Branch: local_main
 
 Workspace Repository:
 
@@ -398,31 +398,29 @@ https://github.com/Vivid-Vortex-DevOps/GitOpsLocalPipelinePoc.git
 
 Trunk Based Development (TBD).
 
-main is the single source of truth for all repositories.
+Each repository has a single trunk branch that is the source of truth.
 
-ArgoCD automatically syncs from main.
+ArgoCD automatically syncs from the trunk branch.
 
 Infrastructure Repository (local-platform-infra):
 
-Branch: main
+Branch: main (local-only repo)
 
 Go Service Repository (go-crud-service):
 
-Branch: main
+Branch: local_main (shared repo, main is for cloud)
 
 Spring Boot Repository (springboot-crud-service):
 
-Branch: main
+Branch: local_main (shared repo, main is for cloud)
 
 Workspace Repository (GitOpsLocalPipelinePoc):
 
-Branch: main
+Branch: main (local-only repo)
 
-Feature branches follow: feature/* pattern from main.
+Feature branches follow: feature/* pattern from the trunk branch.
 
-All merges go to main.
-
-No long-lived branches.
+All merges go to the trunk branch (main or local_main).
 
 ---
 
@@ -431,19 +429,18 @@ No long-lived branches.
 workspace/
 |
 ├── CLAUDE_LOCAL.md
-├── CLAUDE_CLOUD.md
 |
 ├── local-platform-infra/
 |
-├── go-crud-service/           (main branch)
+├── go-crud-service/           (local_main branch)
 |
-└── springboot-crud-service/   (main branch)
+└── springboot-crud-service/   (local_main branch)
 
 Both the Spring Boot and Go projects already exist with source code, Dockerfiles, Helm charts, GitHub Actions, and documentation.
 
 Do NOT recreate either project.
 
-Extend both existing projects on main.
+Extend both existing projects on local_main.
 
 ---
 
@@ -860,7 +857,7 @@ Developer
 → Feature Branch
 → Pull Request
 → CI Validation (self-hosted runner)
-→ Merge To main
+→ Merge To trunk (main or local_main)
 → Docker Build (self-hosted runner)
 → Push to JFrog (localhost)
 → Update image tag in Git
@@ -1093,7 +1090,7 @@ Code should move through:
 Developer
 → Pull Request
 → CI Validation (self-hosted runner)
-→ Merge To main
+→ Merge To trunk (main or local_main)
 → Full CI/CD Pipeline (self-hosted runner)
 → Build + Test + Scan + Package
 → Push to JFrog (localhost)
@@ -1111,7 +1108,7 @@ Model after enterprise-grade pipeline with DAG parallelism.
 
 Two workflows per application repository:
 
-## 1. cicd.yaml (on: push to main)
+## 1. cicd.yaml (on: push to trunk branch)
 
 Full CI/CD pipeline with parallel job execution.
 
@@ -1123,7 +1120,7 @@ Manual promotion workflow for deploying to specific environments.
 
 # CICD PIPELINE (cicd.yaml)
 
-Trigger: Push to main
+Trigger: Push to trunk branch (local_main for app repos, main for infra repo)
 
 Runs on: [self-hosted, linux]
 
@@ -1312,7 +1309,7 @@ App URL: http://localhost:{port}
 
 # PULL REQUEST PIPELINE
 
-Trigger: Pull Requests to main
+Trigger: Pull Requests to trunk branch (local_main for app repos, main for infra repo)
 
 Runs on: [self-hosted, linux]
 
@@ -1420,11 +1417,11 @@ Shell scripts + Helm is the idiomatic approach for local K8s.
 
 When migrating to cloud (Azure/AWS/GCP):
 
-Switch to cloud-platform-infra repository.
+Add Terraform to local-platform-infra or create a separate cloud-focused repo.
 
 Terraform manages cloud resources.
 
-Helm charts and ArgoCD configurations remain mostly unchanged.
+Helm charts and ArgoCD configurations from local-platform-infra remain mostly unchanged.
 
 Application code remains identical.
 
@@ -1652,7 +1649,7 @@ Repository:
 
 go-crud-service
 
-Branch: main
+Branch: local_main
 
 Purpose:
 
@@ -1672,7 +1669,7 @@ Responsible for:
 
 # GO TARGET STRUCTURE
 
-go-crud-service/ (main branch)
+go-crud-service/ (local_main branch)
 |
 ├── .devcontainer/
 |   ├── devcontainer.json
@@ -1734,7 +1731,7 @@ Repository:
 
 springboot-crud-service
 
-Branch: main
+Branch: local_main
 
 Purpose:
 
@@ -1744,13 +1741,13 @@ The existing starter.spring.io project must be reused.
 
 Do not regenerate it.
 
-Extend it on main.
+Extend it on local_main.
 
 ---
 
 # SPRING BOOT TARGET STRUCTURE
 
-springboot-crud-service/ (main branch)
+springboot-crud-service/ (local_main branch)
 |
 ├── .devcontainer/
 |   ├── devcontainer.json
@@ -2196,14 +2193,14 @@ Total: ~6GB minimum for the cluster
 
 ## PHASE 6: Go Service
 
-* Extend existing Go application (main branch)
+* Extend existing Go application (local_main branch)
 * Adapt for local K8s deployment
 * Validate CRUD APIs, PostgreSQL integration, OpenTelemetry
 * Validate Docker and Helm chart for local environment
 
 ## PHASE 7: Spring Boot Service
 
-* Extend existing Spring Boot project (main branch)
+* Extend existing Spring Boot project (local_main branch)
 * Adapt for local K8s deployment
 * Validate CRUD APIs, PostgreSQL integration, OpenTelemetry
 * Validate Docker and Helm chart for local environment
@@ -2265,17 +2262,21 @@ Total: ~6GB minimum for the cluster
 
 Use Trunk Based Development (TBD).
 
-main is the single source of truth for all repositories.
+Each repository has a single trunk branch as the source of truth.
 
-ArgoCD automatically syncs from main.
+ArgoCD automatically syncs from the trunk branch.
 
-All Repositories:
+Infrastructure (local-platform-infra): trunk = main
 
-Base branch: main
+Application (go-crud-service): trunk = local_main
 
-Feature branches: feature/*
+Application (springboot-crud-service): trunk = local_main
 
-All merges go to main. No long-lived branches.
+Workspace (GitOpsLocalPipelinePoc): trunk = main
+
+Feature branches: feature/* from the trunk branch.
+
+All merges go to the trunk branch. No long-lived branches.
 
 ---
 
