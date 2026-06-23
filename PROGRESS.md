@@ -1,6 +1,6 @@
 # Local Platform Implementation Progress
 
-Last updated: 2026-06-22
+Last updated: 2026-06-24
 
 Reference design: [CLAUDE_LOCAL.md](CLAUDE_LOCAL.md)
 
@@ -19,7 +19,7 @@ Reference design: [CLAUDE_LOCAL.md](CLAUDE_LOCAL.md)
 | 7 | Spring Boot Service | DONE | Deployed to Kind, CRUD API verified, all tests pass |
 | 8 | CI/CD | DONE | Workflows created, runner binary installed, registration pending |
 | 9 | GitOps | DONE | ArgoCD managing both apps, SealedSecrets, auto-sync verified |
-| 10 | Observability | DONE | Prometheus, Grafana, Loki, Jaeger, Kiali verified; Spring Boot OTLP pending |
+| 10 | Observability | DONE | Prometheus, Grafana, Loki, Jaeger, Kiali verified; both services tracing to Jaeger |
 | 11 | Security | DONE | SealedSecrets, container hardening, NetworkPolicies, non-root verified |
 | 12 | Destruction and Recovery | DONE | destroy.sh, verify.sh scripts created |
 | 13 | Documentation | DONE | ADRs, setup guide, troubleshooting guide |
@@ -32,9 +32,9 @@ Reference design: [CLAUDE_LOCAL.md](CLAUDE_LOCAL.md)
 | Repository | Remote | Branch | Last Push | Status |
 |------------|--------|--------|-----------|--------|
 | GitOpsLocalPipelinePoc | Vivid-Vortex-DevOps | main | 2026-06-21 | CLAUDE_LOCAL.md, CLAUDE_CLOUD.md, PROGRESS.md |
-| local-platform-infra | Vivid-Vortex-DevOps | main | 2026-06-21 | Bootstrap scripts, Helm values, ArgoCD apps, Kind configs |
-| go-crud-service | Vivid-Vortex-DevOps | local_main | 2026-06-21 | Branch created from main (no local changes yet) |
-| springboot-crud-service | Vivid-Vortex-DevOps | local_main | 2026-06-21 | Branch created from main (no local changes yet) |
+| local-platform-infra | Vivid-Vortex-DevOps | main | 2026-06-24 | Bootstrap scripts, Helm values, ArgoCD apps, Kind configs, deploy-apps.sh |
+| go-crud-service | Vivid-Vortex-DevOps | local_main | 2026-06-22 | Local Kind deployment, CI/CD, ServiceMonitor, OTLP tracing |
+| springboot-crud-service | Vivid-Vortex-DevOps | local_main | 2026-06-24 | Local Kind deployment, CI/CD, ServiceMonitor, OTLP tracing fixed |
 
 ---
 
@@ -162,7 +162,7 @@ Reference design: [CLAUDE_LOCAL.md](CLAUDE_LOCAL.md)
 - [x] Loki collecting logs from all namespaces (including applications-dev)
 - [x] Kiali service mesh visualization responsive
 - [x] Jaeger UI accessible with Go service traces
-- [ ] Spring Boot OTLP tracing: auto-config not activating despite spring-boot-opentelemetry module (needs further Spring Boot 4.x investigation)
+- [x] Spring Boot OTLP tracing: working via spring-boot-starter-opentelemetry + corrected OTLP base endpoint (port 4318, no /v1/traces suffix)
 
 ## Phase 11: Security - DONE
 
@@ -213,22 +213,39 @@ Reference design: [CLAUDE_LOCAL.md](CLAUDE_LOCAL.md)
 | ArgoCD | `kubectl port-forward svc/argocd-server -n argocd 8080:443` | https://localhost:8080 |
 | Grafana | `kubectl port-forward svc/kube-prometheus-stack-grafana -n monitoring 3000:80` | http://localhost:3000 |
 | Prometheus | `kubectl port-forward svc/kube-prometheus-stack-prometheus -n monitoring 9090:9090` | http://localhost:9090 |
-| Jaeger | `kubectl port-forward svc/jaeger-query -n monitoring 16686:16686` | http://localhost:16686 |
+| Jaeger | `kubectl port-forward svc/jaeger -n monitoring 16686:16686` | http://localhost:16686 |
 | Kiali | `kubectl port-forward svc/kiali -n istio-system 20001:20001` | http://localhost:20001 |
 
 ArgoCD admin password: Retrieve with `kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d`
 
 ---
 
-## Pending Items / Blockers
+## Pending Items / Deferred
 
-1. **WSL2 Update + Native Docker Engine Migration** (deferred):
-   - Update WSL2 to Store version (`Add-AppxPackage -Path "$env:TEMP\wsl_2.7.8.msixbundle"` — requires admin)
-   - Restart WSL so systemd runs as PID 1 (`wsl --shutdown`)
-   - Remove broken kubectl symlink (`sudo rm /usr/local/bin/kubectl`)
-   - Migrate from Docker Desktop to native Docker CE in WSL2
+1. **WSL2 systemd + Native Docker Engine** (deferred):
+   - Update WSL2 to Store version (`Add-AppxPackage` — requires admin)
+   - Enable systemd (PID 1) for native Docker Engine and runner systemd service
+   - Currently using Docker Desktop (works fine for all platform operations)
    - `.wslconfig` already created (16GB RAM, 4 CPU, 4GB swap)
-   - kubectl v1.32.2 already installed in ~/bin
-2. **JFrog Container Registry**: Not yet installed in Kind cluster (using `kind load docker-image` interim)
-3. **Self-hosted runner**: Not yet configured
-4. **Application adaptation**: Go and Spring Boot services not yet adapted for local deployment
+2. **JFrog Container Registry** (deferred): Using `kind load docker-image` — works for local dev, JFrog would add registry pull flow
+3. **Self-hosted runner registration** (interactive): Binary at ~/actions-runner, needs `./config.sh` with GitHub token
+4. **Runner systemd service**: Requires WSL2 systemd (item 1)
+
+## Bootstrapping (New Machine)
+
+Prerequisites: Windows 11 + WSL2 (Ubuntu) + Docker Desktop
+
+```bash
+# 1. Clone infra repo
+git clone https://github.com/Vivid-Vortex-DevOps/local-platform-infra.git
+cd local-platform-infra
+
+# 2. Full setup (installs tools, creates cluster, deploys apps)
+make all
+
+# 3. Verify everything is healthy
+make verify
+
+# 4. Start port-forwards for UI access
+make port-forward
+```
