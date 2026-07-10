@@ -2481,3 +2481,490 @@ Phase F:
 - Deploy to Kind cluster
 
 Do NOT deploy before completing all previous phases.
+
+---
+
+# Local Setup Changes Log — 2026-06-28
+
+All changes below were applied **on top of** the original design to make it work fully local (no GitHub access required).
+
+Covers all 4 repos:
+
+- `local-platform-infra`
+- `go-crud-service`
+- `springboot-crud-service`
+- `GitOpsLocalPipelinePoc`
+
+## WSL2 Config — `/mnt/c/Users/Deepak.Kumar2/.wslconfig`
+
+**Set:**
+- `memory=18GB`
+- `processors=8`
+- `swap=8GB`
+
+**Added:**
+- `autoMemoryReclaim=dropcache`
+- `sparseVhd=true`
+
+**Kept:**
+- `networkingMode=mirrored` (shares Windows network stack)
+
+## Tools Installed to `~/.local/bin`
+
+- `kind v0.32.0`
+- `yq v4.53.3`
+- `argocd CLI v3.4.4`
+- `istioctl 1.26.1`
+
+**Fixed Java:**
+- Replaced `~/jdk-17.0.13+11` entries in `~/.bashrc`
+- With `/usr/lib/jvm/java-21-openjdk-amd64`
+
+## Windows Hosts File — `C:\Windows\System32\drivers\etc\hosts`
+
+Add this single line (append to existing or replace):
+
+```text
+127.0.0.1 app.powerbi.com argocd.local grafana.local prometheus.local jaeger.local kiali.local go-crud.local springboot-crud.local gitea.local
+```
+
+## `local-platform-infra` — Changes
+
+### `cluster/kind-single-node.yaml`
+
+- Changed host ports:
+  - `80 → 19080`
+  - `443 → 19443`
+- **Reason:** Port 80 occupied by Windows IIS via mirrored networking
+
+### `bootstrap/bootstrap.sh` — Major Rewrite
+
+- Added `~/.local/bin` to PATH
+- Replaced raw MetalLB URL (returns 400) with Helm install:
+
+  ```bash
+  helm upgrade --install metallb metallb/metallb
+  ```
+
+- Replaced `apply_root_app` (needs GitHub) with `apply_argocd_apps` loop
+  - Applies each app YAML locally using `kubectl apply -f`
+- Added `apply_local_manifests`
+  - Applies namespaces + network-policies via kubectl
+- Added `apply_platform_ingress`
+  - Applies `helm/ingress/platform-ingress.yaml` via kubectl
+- Loosened wait:
+  - Checks **Healthy** only (not **Synced**) to avoid GitHub-dependent OutOfSync blocking
+
+### `argocd/apps/istiod.yaml`
+
+- Converted from multi-source (GitHub `ref: values`) to single source with `values` block inlined.
+- Added Helm values:
+  - `pilot.resources`
+  - `meshConfig.defaultConfig.tracing`
+
+### `argocd/apps/istio-base.yaml`
+
+- Added `ignoreDifferences` for `apiextensions.k8s.io/CustomResourceDefinition` on:
+  - `/status`
+  - `/spec/preserveUnknownFields`
+- **Reason:** Istio CRDs constantly drift on those fields. This is cosmetic only; the cluster is functional.
+
+### `argocd/apps/jaeger.yaml`
+
+- Converted from multi-source to single source with inlined values.
+
+### `argocd/apps/kiali.yaml`
+
+- Converted from multi-source to single source with inlined values.
+
+### `argocd/apps/loki.yaml`
+
+- Converted from multi-source to single source with inlined values.
+
+### `argocd/apps/postgresql.yaml`
+
+- Converted from multi-source to single source with inlined values.
+
+### `argocd/apps/kube-prometheus-stack.yaml`
+
+- Converted from multi-source to single source with inlined values.
+
+### `argocd/apps/go-crud-service-dev.yaml` — New/Rewritten
+
+- `repoURL` changed from GitHub to:
+
+  ```text
+  http://gitea-http.gitops.svc.cluster.local:3000/localadmin/go-crud-service.git
+  ```
+
+- `targetRevision`: `main`
+- No `releaseName` override (ArgoCD uses application name as the release name).
+
+### `argocd/apps/springboot-crud-service-dev.yaml` — New/Rewritten
+
+- `repoURL` changed from GitHub to:
+
+  ```text
+  http://gitea-http.gitops.svc.cluster.local:3000/localadmin/springboot-crud-service.git
+  ```
+
+- `targetRevision`: `main`
+
+### `argocd/apps/gitea.yaml` — New File
+
+- ArgoCD application for Gitea itself.
+- Chart: `https://dl.gitea.com/charts/` → `gitea`
+- Inlined values:
+  - SQLite DB
+  - In-memory session/cache
+  - No Redis
+  - No PostgreSQL
+- Namespace: `gitops`
+- Project: `platform`
+
+### `argocd/resources/dev/network-policies.yaml`
+
+Added egress rule to **both** `go-crud-service` and `springboot-crud-service` policies:
+
+- Allow egress to the `istio-system` namespace on ports:
+  - `15012`
+  - `15010`
+  - `15014`
+  - `443`
+
+Without this, the Istio sidecar init container times out and pods remain stuck in `Init:1/2`.
+
+### `helm/ingress/platform-ingress.yaml`
+
+Added ingress for:
+
+- `go-crud.local` → `go-crud-service:8080` (namespace: `applications-dev`)
+- `springboot-crud.local` → `springboot-crud-service:8080` (namespace: `applications-dev`)
+- `gitea.local` → `gitea-http:3000` (namespace: `gitops`)
+
+### ArgoCD `applications` AppProject
+
+Patched via `kubectl`. Added Gitea internal URLs to `sourceRepos`:
+
+```text
+http://gitea-http.gitops.svc.cluster.local:3000/localadmin/go-crud-service.git
+http://gitea-http.gitops.svc.cluster.local:3000/localadmin/springboot-crud-service.git
+```
+
+### ArgoCD Repository Credentials
+
+Created as Kubernetes secrets in the `argocd` namespace.
+
+- Secret: `gitea-go-crud-repo`
+  - Type: `git`
+  - Username: `localadmin`
+  - Password: `localadmin123`
+- Secret: `gitea-springboot-crud-repo` — same pattern
+- Label: `argocd.argoproj.io/secret-type=repository`
+
+## `go-crud-service` — Changes
+
+### `Dockerfile`
+
+- Changed base image: `golang:1.23-alpine` → `golang:1.25-alpine`
+- **Reason:** `go.mod` requires Go 1.25. Go 1.23 fails with a `GOTOOLCHAIN=local` error.
+
+### `deployment/values/dev.yaml`
+
+- `image.repository`: `ghcr.io/...` → `go-crud-service`
+- `image.tag`: `latest` → `local`
+- `image.pullPolicy`: `Always` → `Never` (uses image preloaded into Kind)
+- Fixed `env.OTEL_EXPORTER_OTLP_ENDPOINT` to:
+
+  ```text
+  http://jaeger-collector.monitoring.svc.cluster.local:4318
+  ```
+
+- Removed Azure Workload Identity annotations.
+
+### Build Command
+
+Must use `--network=host`.
+
+```bash
+docker build --network=host -t go-crud-service:local .
+kind load docker-image go-crud-service:local --name vvd-local
+```
+
+### Kubernetes Secret
+
+Created in the `applications-dev` namespace.
+
+```bash
+kubectl create secret generic go-crud-db-credentials \
+  --from-literal=database-url="postgres://postgres:postgres@postgresql.applications-dev.svc.cluster.local:5432/go_service_db?sslmode=disable" \
+  -n applications-dev \
+  --context kind-vvd-local
+```
+
+## `springboot-crud-service` — Changes
+
+### `deployment/values/dev.yaml`
+
+- `image.repository`: `ghcr.io/...` → `springboot-crud-service`
+- `image.tag`: `latest` → `local`
+- `image.pullPolicy`: `Always` → `Never`
+- Fixed `env.OTEL_EXPORTER_OTLP_ENDPOINT` to:
+
+  ```text
+  http://jaeger-collector.monitoring.svc.cluster.local:4318
+  ```
+
+- Removed Azure Workload Identity annotation: `serviceAccount.annotations: {}`
+
+### Build Command
+
+Must use `--network=host`.
+
+```bash
+docker build --network=host -t springboot-crud-service:local .
+kind load docker-image springboot-crud-service:local --name vvd-local
+```
+
+### `products` Table
+
+Must be created manually before the first run.
+
+**Reason:** Spring Boot 4.1.0 Flyway ordering issue — Hibernate validates before Flyway runs.
+
+Run the migration SQL directly in the `springboot_service_db` database:
+
+```bash
+kubectl exec -n applications-dev --context kind-vvd-local postgresql-0 -c postgresql -- \
+env PGPASSWORD=postgres psql -U postgres -d springboot_service_db -f - <<'SQL'
+
+CREATE TABLE IF NOT EXISTS products (
+    id BIGSERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    price NUMERIC(19,4) NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT chk_products_price
+        CHECK (price >= 0),
+
+    CONSTRAINT chk_products_quantity
+        CHECK (quantity >= 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_products_name
+    ON products (name);
+
+CREATE INDEX IF NOT EXISTS idx_products_created_at
+    ON products (created_at DESC);
+
+SQL
+```
+
+### Kubernetes Secret
+
+Created in the `applications-dev` namespace.
+
+```bash
+kubectl create secret generic springboot-crud-db-credentials \
+  --from-literal=database-url="jdbc:postgresql://postgresql.applications-dev.svc.cluster.local:5432/springboot_service_db" \
+  --from-literal=username="postgres" \
+  --from-literal=password="postgres" \
+  -n applications-dev \
+  --context kind-vvd-local
+```
+
+## Gitea Local Git Server — New (Not in Original Design)
+
+### Why?
+
+The original design used GitHub repositories. To make the setup fully local, Gitea runs inside the Kind cluster and serves as the Git backend for ArgoCD.
+
+### Deployed via Helm
+
+Also managed by the ArgoCD application `gitea`.
+
+```bash
+helm repo add gitea-charts https://dl.gitea.com/charts/
+
+helm upgrade --install gitea gitea-charts/gitea \
+  -n gitops \
+  --create-namespace \
+  --set gitea.admin.username=localadmin \
+  --set gitea.admin.password=localadmin123 \
+  --set gitea.config.database.DB_TYPE=sqlite3 \
+  --set persistence.enabled=false \
+  --set redis-cluster.enabled=false \
+  --set postgresql.enabled=false
+```
+
+### Repositories Created
+
+Created under the **`localadmin`** organization:
+
+- `go-crud-service`
+- `springboot-crud-service`
+- `local-platform-infra`
+
+### Push Workflow
+
+Port-forward Gitea first, then push:
+
+```bash
+kubectl port-forward -n gitops \
+  --context kind-vvd-local \
+  svc/gitea-http 13000:3000 &
+
+cd <repo-dir>
+
+git remote add gitea \
+  http://localadmin:localadmin123@localhost:13000/localadmin/<repo-name>.git
+
+git push -f gitea HEAD:main
+```
+
+### Internal URL
+
+Used by ArgoCD:
+
+```text
+http://gitea-http.gitops.svc.cluster.local:3000
+```
+
+## Access URLs (All via Port `19080`)
+
+| Service | URL | Credentials |
+|---|---|---|
+| ArgoCD | http://argocd.local:19080 | `admin` / `o799CsijaVd2iGt9` |
+| Gitea | http://gitea.local:19080 | `localadmin` / `localadmin123` |
+| Grafana | http://grafana.local:19080 | `admin` / `prom-operator` |
+| Prometheus | http://prometheus.local:19080 | — |
+| Jaeger | http://jaeger.local:19080 | — |
+| Kiali | http://kiali.local:19080 | — |
+| Go CRUD API | http://go-crud.local:19080/api/v1/products | — |
+| Spring Boot API | http://springboot-crud.local:19080/actuator/health | — |
+
+## Kind Cluster
+
+- Name: `vvd-local`
+- kubectl context: `kind-vvd-local`
+
+**Ports:**
+- `19080 → 80`
+- `19443 → 443`
+
+**NodePorts:**
+- `30000`
+- `30001`
+
+## GitOps Update Workflow
+
+1. Edit code locally.
+2. Build image:
+
+   ```bash
+   docker build --network=host -t <image>:local .
+   ```
+
+3. Load image into Kind:
+
+   ```bash
+   kind load docker-image <image>:local --name vvd-local
+   ```
+
+4. Commit and push:
+
+   ```bash
+   git add -A
+   git commit -m "..."
+   git push gitea HEAD:main
+   ```
+
+5. ArgoCD automatically syncs within approximately **3 minutes**.
+
+## Swagger UI Access Fix
+
+### Problem
+
+`http://springboot-crud.local:19080/swagger-ui.html` was not accessible.
+
+### Root Cause
+
+The following hostnames were missing from the Windows hosts file:
+
+- `springboot-crud.local`
+- `go-crud.local`
+
+### Fix
+
+Update `C:\Windows\System32\drivers\etc\hosts` to include:
+
+```text
+127.0.0.1 app.powerbi.com argocd.local grafana.local prometheus.local jaeger.local kiali.local go-crud.local springboot-crud.local gitea.local
+```
+
+### Use Direct URL
+
+Swagger UI:
+
+```text
+http://springboot-crud.local:19080/swagger-ui/index.html
+```
+
+OpenAPI JSON:
+
+```text
+http://springboot-crud.local:19080/api-docs
+```
+
+### Go Service
+
+No Swagger is configured. Use the REST endpoint directly:
+
+```text
+/api/v1/products
+```
+
+## PATH Setup — `~/.bashrc`
+
+Add:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+**Reason:** `kind`, `argocd`, `yq`, and `istioctl` are installed under `~/.local/bin`. Without updating the PATH, they only work in the terminal session where `bootstrap.sh` was executed.
+
+Also documented in `local-platform-infra/docs/guides/troubleshooting.md` under **First-Time Setup**.
+
+## Summary
+
+The original GitHub-based design was adapted to run completely **locally** by:
+
+- Running a single-node Kind cluster
+- Using Gitea as the local Git server
+- Replacing GitHub-based ArgoCD sources with local repositories
+- Loading Docker images directly into Kind
+- Configuring local ingress hostnames
+- Adjusting network policies for Istio
+- Using locally managed repository credentials
+- Updating WSL2 resource configuration
+- Installing required CLI tools locally
+- Removing Azure-specific workload identity configuration where unnecessary
+
+The resulting setup provides a fully self-contained local GitOps development environment with:
+
+- ArgoCD
+- Gitea
+- Istio
+- Prometheus
+- Grafana
+- Jaeger
+- Kiali
+- PostgreSQL
+- Go CRUD Service
+- Spring Boot CRUD Service
+
+No external GitHub access is required after the initial setup.
