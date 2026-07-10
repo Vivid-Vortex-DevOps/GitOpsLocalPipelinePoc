@@ -3,3 +3,8 @@ This project is a poc to showcase Go/Java langugaue microservice deployed to Azu
 
 ## This is the root app which binds together following 3 repos in this same Org: local-platform-infra + springboot-crud-service + go-crud-service similar to GitOpsTerraformAzureK8sPipelinePoc repo in this organisation.
 
+Below is the Local file struccture Screenshot.
+
+<img width="770" height="216" alt="image" src="https://github.com/user-attachments/assets/533db68b-0cf2-4a34-b3dd-4b30a8c6d5f3" />
+
+
